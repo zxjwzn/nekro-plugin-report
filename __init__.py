@@ -48,9 +48,12 @@ config: ReportConfig = plugin.get_config(ReportConfig)
 @plugin.mount_sandbox_method(SandboxMethodType.TOOL, name="呼叫管理员", description="向管理员打小报告! 遇到突发事件时可向管理员发送消息")
 async def report(_ctx: AgentCtx, msg: str):
     """向管理员打小报告! 遇到突发事件时可向管理员发送消息
-
+    *在报告时需要保持扮演人设,写清楚事件发生的chat_key,涉及人员以及事情经过
     Args:
         msg: 要报告的内容
+
+    Example:
+        report("呜呜呜,目力先辈(qq:114514)在group_123456里欺负我")
     """
     sent_to = []
     errors = []

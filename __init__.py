@@ -4,109 +4,91 @@
 使用 wttr.in API 获取天气数据。
 """
 
-from typing import Dict
+from typing import Dict, List
 
 import httpx
+from pydantic import Field
+
+from nekro_agent.api import message
 from nekro_agent.api.schemas import AgentCtx
 from nekro_agent.core import logger
 from nekro_agent.services.plugin.base import ConfigBase, NekroPlugin, SandboxMethodType
-from pydantic import Field
 
 # TODO: 插件元信息，请修改为你的插件信息
 plugin = NekroPlugin(
-    name="天气查询插件",  # TODO: 插件名称
-    module_name="weather",  # TODO: 插件模块名 (如果要发布该插件，需要在 NekroAI 社区中唯一)
-    description="提供指定城市的天气查询功能",  # TODO: 插件描述
-    version="1.0.0",  # TODO: 插件版本
-    author="KroMiose",  # TODO: 插件作者
-    url="https://github.com/KroMiose/nekro-plugin-template",  # TODO: 插件仓库地址
+    name="呼叫管理员",
+    module_name="nekro_plugin_report",
+    description="向管理员打小报告! 遇到突发事件时可向管理员发送消息", 
+    version="0.1.0",
+    author="Zaxpris",
+    url="https://github.com/zxjwzn/nekro-plugin-report", 
 )
 
 
-# TODO: 插件配置，根据需要修改
 @plugin.mount_config()
-class WeatherConfig(ConfigBase):
-    """天气查询配置"""
+class ReportConfig(ConfigBase):
+    """呼叫管理员配置"""
 
-    API_URL: str = Field(
-        default="https://wttr.in/",
-        title="天气API地址",
-        description="天气查询API的基础URL",
+    admin_qqs: List[str] = Field(
+        default=[],
+        title="管理员QQ号列表",
+        description="需要接收报告的管理员QQ号列表",
     )
-    TIMEOUT: int = Field(
-        default=10,
-        title="请求超时时间",
-        description="API请求的超时时间(秒)",
+    admin_groups: List[str] = Field(
+        default=[],
+        title="管理群号列表",
+        description="需要接收报告的管理群号列表",
     )
 
 
 # 获取配置实例
-config: WeatherConfig = plugin.get_config(WeatherConfig)
+config: ReportConfig = plugin.get_config(ReportConfig)
 
 
-@plugin.mount_sandbox_method(SandboxMethodType.AGENT, name="查询天气", description="查询指定城市的实时天气信息")
-async def query_weather(_ctx: AgentCtx, city: str) -> str:
-    """查询指定城市的实时天气信息。
+@plugin.mount_sandbox_method(SandboxMethodType.TOOL, name="呼叫管理员", description="向管理员打小报告! 遇到突发事件时可向管理员发送消息")
+async def report(_ctx: AgentCtx, msg: str):
+    """向管理员打小报告! 遇到突发事件时可向管理员发送消息
 
     Args:
-        city: 需要查询天气的城市名称，例如 "北京", "London"。
-
-    Returns:
-        str: 包含城市实时天气信息的字符串。查询失败时返回错误信息。
-
-    Example:
-        查询北京的天气:
-        query_weather(city="北京")
-        查询伦敦的天气:
-        query_weather(city="London")
+        msg: 要报告的内容
     """
-    try:
-        async with httpx.AsyncClient(timeout=config.TIMEOUT) as client:
-            response = await client.get(f"{config.API_URL}{city}?format=j1")
-            response.raise_for_status()
-            data: Dict = response.json()
+    sent_to = []
+    errors = []
 
-        # 提取需要的天气信息
-        # wttr.in 的 JSON 结构可能包含 current_condition 列表
-        if not data.get("current_condition"):
-            logger.warning(f"城市 '{city}' 的天气数据格式不符合预期，缺少 'current_condition'")
-            return f"未能获取到城市 '{city}' 的有效天气数据，请检查城市名称是否正确。"
+    # 发送给管理员QQ
+    for qq in config.admin_qqs:
+        chat_key = f"private_{qq}"
+        try:
+            await message.send_text(chat_key, msg, _ctx)
+            logger.info(f"已向管理员QQ '{qq}' 发送报告")
+            sent_to.append(chat_key)
+        except Exception as e:
+            error_msg = f"向管理员QQ '{qq}' ({chat_key}) 发送报告时发生错误: {e}"
+            logger.error(error_msg)
+            errors.append(error_msg)
 
-        # 处理获取到的天气数据
-        current_condition = data["current_condition"][0]
-        temp_c = current_condition.get("temp_C")
-        feels_like_c = current_condition.get("FeelsLikeC")
-        humidity = current_condition.get("humidity")
-        weather_desc_list = current_condition.get("weatherDesc", [])
-        weather_desc = weather_desc_list[0].get("value") if weather_desc_list else "未知"
-        wind_speed_kmph = current_condition.get("windspeedKmph")
-        wind_dir = current_condition.get("winddir16Point")
-        visibility = current_condition.get("visibility")
-        pressure = current_condition.get("pressure")
+    # 发送给管理群
+    for group in config.admin_groups:
+        chat_key = f"group_{group}"
+        try:
+            await message.send_text(chat_key, msg, _ctx)
+            logger.info(f"已向管理群 '{group}' 发送报告")
+            sent_to.append(chat_key)
+        except Exception as e:
+            error_msg = f"向管理群 '{group}' ({chat_key}) 发送报告时发生错误: {e}"
+            logger.error(error_msg)
+            errors.append(error_msg)
 
-        # 格式化返回结果
-        result = (
-            f"城市: {city}\n"
-            f"天气状况: {weather_desc}\n"
-            f"温度: {temp_c}°C\n"
-            f"体感温度: {feels_like_c}°C\n"
-            f"湿度: {humidity}%\n"
-            f"风向: {wind_dir}\n"
-            f"风速: {wind_speed_kmph} km/h\n"
-            f"能见度: {visibility} km\n"
-            f"气压: {pressure} hPa"
-        )
-        logger.info(f"已查询到城市 '{city}' 的天气")
-    except Exception as e:
-        # 捕获其他所有未知异常
-        logger.exception(f"查询城市 '{city}' 天气时发生未知错误: {e}")
-        return f"查询 '{city}' 天气时发生内部错误。"
-    else:
-        return result
+    if not sent_to and errors:
+        # 如果所有发送都失败了，则抛出异常
+        raise Exception(f"发送报告失败，错误详情: {'; '.join(errors)}")
+    if errors:
+        # 如果部分发送失败，记录警告但认为操作部分成功
+        logger.warning(f"部分报告发送失败: {'; '.join(errors)}")
+
+    logger.info(f"报告已成功发送给: {', '.join(sent_to)}")
 
 
 @plugin.mount_cleanup_method()
 async def clean_up():
     """清理插件资源"""
-    # 如果有使用数据库连接、文件句柄或其他需要释放的资源，在此处添加清理逻辑
-    logger.info("天气查询插件资源已清理。")
